@@ -278,4 +278,4 @@ For support, email support@talynx.com or create an issue on GitHub.
 
 ---
 
-**Built with ❤️ using FastAPI, BERT, and modern ML techniques**
+**Manogya Guragai**
