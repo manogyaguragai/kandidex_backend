@@ -267,15 +267,5 @@ sudo apt-get install libmupdf-dev  # Ubuntu/Debian
 brew install mupdf-tools           # macOS
 ```
 
-## 📧 Support
-
-For support, email support@talynx.com or create an issue on GitHub.
-
-## 🔗 Related Projects
-
-- [Talynx Frontend](https://github.com/yourusername/talynx-frontend) - React frontend
-- [Talynx Mobile](https://github.com/yourusername/talynx-mobile) - Mobile application
-
----
 
 **Manogya Guragai**
