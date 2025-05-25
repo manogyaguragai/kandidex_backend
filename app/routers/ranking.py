@@ -7,15 +7,17 @@ from typing import List, Dict
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException
 from pydantic import BaseModel
 from sentence_transformers import SentenceTransformer, util, CrossEncoder
+from pathlib import Path
 
 router = APIRouter(prefix="/rank", tags=["ranking"])
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+
 # Initialize models
-bi_encoder = SentenceTransformer(
-    "/home/manogyaguragai/Desktop/Projects/talynx_backend/app/ml/output/output_bert_mini_job_resume/",
-    device=DEVICE
-)
+MODEL_DIR = Path(__file__).resolve().parent.parent / "ml" / "output" / "output_bert_mini_job_resume"
+
+bi_encoder = SentenceTransformer(str(MODEL_DIR), device=DEVICE)
+
 bi_encoder.max_seq_length = 512
 cross_encoder = CrossEncoder(
     "cross-encoder/ms-marco-MiniLM-L-6-v2",
