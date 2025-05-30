@@ -11,10 +11,10 @@ app = FastAPI(title="Talynx: AI-Powered HR System")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,            # allow specific origins
+    allow_origins=["*"],  # For development only
     allow_credentials=True,
-    allow_methods=["*"],              # allow all HTTP methods
-    allow_headers=["*"],              # allow all headers
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 app.include_router(alternates.router)

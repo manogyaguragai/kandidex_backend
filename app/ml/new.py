@@ -149,9 +149,59 @@ if __name__ == "__main__":
     
     # Job description
     job_description = """
-Dhulikhel Hospital, Kathmandu University Hospital, announces a vacancy for the post of Medical Officer for Dhulikhel Hospital and its outreach centers. Qualified and interested candidates are invited to submit their applications along with the required documents to the Communication Department by November 20, 2022.
 
-Applicants must include the following documents with their application: an application letter, a valid NMC (Nepal Medical Council) registration certificate, a curriculum vitae (CV), a copy of their citizenship certificate, and academic-related documents. A few positions are available for the post of Medical Officer.
+About the job
+Job Summary
+
+
+
+We are looking for a highly skilled Artificial Intelligence (AI) Engineer to design, develop, and deploy AI-driven solutions that enhance our products and services. You will be responsible for building machine learning models, developing AI algorithms, and integrating AI capabilities into our existing systems. As an AI Engineer, you will work closely with data scientists, software engineers, and product teams to create intelligent, scalable, and high-performance AI applications.
+
+
+Key Responsibilities
+
+
+
+• Design, develop, and implement AI models, machine learning algorithms, and deep learning solutions.
+• Train and fine-tune machine learning models using large datasets to improve accuracy and performance.
+• Build and optimize AI-driven applications, including natural language processing (NLP), computer vision, recommendation systems, and predictive analytics.
+• Develop and integrate AI models into cloud-based and edge computing environments.
+• Work with structured and unstructured data, applying data preprocessing, feature engineering, and data augmentation techniques.
+• Collaborate with cross-functional teams, including software engineers, data scientists, and business analysts, to align AI solutions with business objectives.
+• Deploy AI models to production environments, monitor their performance, and continuously improve them based on real-world data.
+• Research and stay up to date with the latest AI advancements, frameworks, and best practices to enhance our AI capabilities.
+• Optimize AI models for efficiency, scalability, and real-time processing.
+• Ensure AI models adhere to ethical AI principles, fairness, bias mitigation, and responsible AI deployment.
+
+
+Required Skills & Qualifications
+
+
+
+• Bachelor’s or Master’s degree in Computer Science, Artificial Intelligence, Data Science, or a related field.
+• Proven experience in AI/ML model development, training, and deployment.
+• Proficiency in programming languages such as Python, R, or Java.
+• Hands-on experience with machine learning frameworks (TensorFlow, PyTorch, Scikit-learn, etc.).
+• Strong understanding of deep learning, NLP, computer vision, reinforcement learning, and generative AI models.
+• Experience working with cloud platforms (AWS, Azure, GCP) for AI model deployment.
+• Knowledge of big data technologies such as Hadoop, Spark, or Apache Kafka is a plus.
+• Experience with MLOps tools for model monitoring, retraining, and continuous deployment.
+• Strong analytical and problem-solving skills with a keen interest in AI-driven solutions.
+• Excellent communication and teamwork skills, with the ability to explain AI concepts to non-technical stakeholders.
+
+
+Preferred Qualifications
+
+
+
+• Experience in deploying AI models in real-world applications such as chatbots, fraud detection, predictive analytics, and robotics.
+• Familiarity with AI ethics, model interpretability, and bias mitigation techniques.
+• Knowledge of edge AI and IoT applications.
+• Contributions to AI research or open-source AI projects.
+
+
+If you are passionate about Artificial Intelligence Engineering and thrive in a fast-paced, innovative environment, we’d love to hear from you! 🚀
+
 """
 
     # Directory containing resumes
