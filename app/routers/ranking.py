@@ -191,20 +191,20 @@ async def rank_and_parse_resumes(
     
     # Sort by initial similarity
     candidate_data.sort(key=lambda x: x[3], reverse=True)
-    top_15 = candidate_data[:15]
+    top_20 = candidate_data[:20]
     screen_time = time.time() - screen_start
-    print(f"\n[PHASE 2 COMPLETE] Top 15 candidates selected in {screen_time:.2f} seconds")
+    print(f"\n[PHASE 2 COMPLETE] Top 20 candidates selected in {screen_time:.2f} seconds")
     
     # Phase 3: LLM Analysis
     print(f"\n[PHASE 3] DETAILED LLM ANALYSIS")
     llm_start = time.time()
     detailed_candidates = []
     
-    print(f"  Analyzing top 15 candidates with LLM...")
-    for i, (filename, resume_text, contact, overall_sim) in enumerate(top_15):
+    print(f"  Analyzing top 20 candidates with LLM...")
+    for i, (filename, resume_text, contact, overall_sim) in enumerate(top_20):
         # Extract name using LLM
         name = extract_name_with_llm(resume_text)
-        print(f"    Analyzing candidate {i+1}/15: {name} ({filename})")
+        print(f"    Analyzing candidate {i+1}/20: {name} ({filename})")
         print(f"      Initial similarity: {overall_sim:.3f}")
         
         # Get detailed analysis from LLM
