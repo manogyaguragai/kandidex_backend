@@ -80,6 +80,7 @@ class Candidate(BaseModel):
     justification: str
     email: str
     mobile_number: str
+    resume_content: str  # New field to store resume content
 
 # --- Recursive Zip Processing ---
 def process_zip_file(z: zipfile.ZipFile):
@@ -215,7 +216,7 @@ async def rank_and_parse_resumes(
         detailed_candidates.append({
             "filename": filename,
             "name": name,
-            "resume_text": resume_text,
+            "resume_text": resume_text,  # Keep resume text for final response
             "contact": contact,
             "overall_sim": overall_sim,
             "llm_analysis": analysis,
@@ -250,7 +251,8 @@ async def rank_and_parse_resumes(
             summary=analysis.get("overall_summary", ""),
             justification=analysis.get("justification", ""),
             email=candidate["contact"]["email"],
-            mobile_number=candidate["contact"]["mobile_number"]
+            mobile_number=candidate["contact"]["mobile_number"],
+            resume_content=candidate["resume_text"]  # Add resume content here
         ))
         print(f"  Prepared candidate {i+1}: {candidate['name']} - Fit: {candidate['llm_fit_score']:.3f}")
     
