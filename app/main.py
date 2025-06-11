@@ -1,5 +1,5 @@
 from fastapi import FastAPI
-from routers import alternates, questions, ranking
+from routers import alternates, questions, ranking, screening_runs
 from auth import auth as auth_router
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -21,4 +21,5 @@ app.add_middleware(
 app.include_router(alternates.router)
 app.include_router(questions.router)
 app.include_router(ranking.router)
-app.include_router(auth_router.router)  # Add this line
+app.include_router(auth_router.router)
+app.include_router(screening_runs.router)
