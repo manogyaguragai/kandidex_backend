@@ -5,12 +5,19 @@ from openai import OpenAI
 import os
 import json
 import re
+from config import (
+    get_screening_runs_collection,
+    get_resumes_collection,
+    get_job_details_collection,
+    log_activity
+)
+from bson import ObjectId
+from datetime import datetime
 
 router = APIRouter(prefix="/questions", tags=["generate_questions"])
 
 openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-# Keep the QuestionItem model for response validation
 class Question(BaseModel):
     question: str
     skill_type: Literal["soft skill", "hard skill"]
@@ -43,10 +50,40 @@ def sanitize_json(raw_json: str) -> str:
     sanitized = re.sub(r'[\x00-\x1f\x7f-\x9f]', '', sanitized)
     return sanitized
 
+def update_screening_run_with_questions(run_id: str, resume_id: str, questions: List[dict]):
+    # Find and update the specific candidate in the screening run
+    screening_runs = get_screening_runs_collection()
+    
+    # Find the run and candidate
+    run = screening_runs.find_one({"_id": ObjectId(run_id)})
+    if not run:
+        raise HTTPException(404, "Screening run not found")
+    
+    # Find candidate in run
+    candidate_index = None
+    for idx, candidate in enumerate(run["candidates"]):
+        if candidate["resume_id"] == resume_id:
+            candidate_index = idx
+            break
+    
+    if candidate_index is None:
+        raise HTTPException(404, "Candidate not found in screening run")
+    
+    # Update the candidate document
+    update_query = {
+        "$set": {
+            f"candidates.{candidate_index}.questions_generated": True,
+            f"candidates.{candidate_index}.generated_questions": questions
+        }
+    }
+    
+    screening_runs.update_one({"_id": ObjectId(run_id)}, update_query)
+
 @router.post("/")
 async def generate_questions(
-    resume_content: str = Form(..., description="Raw text of the candidate's resume"),
-    job_description: str = Form(..., description="Job description text"),
+    user_id: str = Form(...),
+    screening_run_id: str = Form(...),
+    resume_id: str = Form(...),
     num_questions: int = Query(5, description="Number of questions to generate"),
     soft_skills_flag: bool = Query(False, description="Include soft skill questions?"),
     hard_skills_flag: bool = Query(True, description="Include hard skill questions?"),
@@ -54,6 +91,29 @@ async def generate_questions(
     hard_skills_focus: Optional[str] = Query(None, description="Focus areas for hard skills (comma-separated)"),
     include_coding: bool = Query(False, description="Should hard skills include coding questions?")
 ):
+    # Get resume content
+    resume_doc = get_resumes_collection().find_one({"_id": ObjectId(resume_id)})
+    if not resume_doc:
+        raise HTTPException(404, "Resume not found")
+    
+    # Get screening run to find job details
+    screening_run = get_screening_runs_collection().find_one(
+        {"_id": ObjectId(screening_run_id)}
+    )
+    if not screening_run:
+        raise HTTPException(404, "Screening run not found")
+    
+    # Get job description from job details
+    job_details = get_job_details_collection().find_one(
+        {"_id": ObjectId(screening_run["job_details_id"])}
+    )
+    if not job_details:
+        raise HTTPException(404, "Job details not found")
+    
+    resume_content = resume_doc.get("content", "")
+    candidate_name = resume_doc.get("candidate_name", "Candidate")
+    job_description = job_details["job_description"]
+
     soft_skills_flag_str = "yes" if soft_skills_flag else "no"
     hard_skills_flag_str = "yes" if hard_skills_flag else "no"
     include_coding_str = "yes" if include_coding else "no"
@@ -64,7 +124,8 @@ async def generate_questions(
               ---
 
               ### INPUTS:
-              - Resume Content: {resume_content}
+              - Candidate Name: {candidate_name}
+              - Resume Content: {resume_content[:2000]} [truncated]
               - Job Description: {job_description}
               - Number of Questions (optional, default = 5): {num_questions}
               - Include Soft Skills Questions? (optional, \"yes\" or \"no\", default = \"no\"): {soft_skills_flag_str}
@@ -99,7 +160,7 @@ async def generate_questions(
 
               ```json
               {{
-                "candidate_name": "John Doe",
+                "candidate_name": "{candidate_name}",
                 "questions": [
                   {{
                     "question": "Describe a time you had to lead a team through a high-pressure situation.",
@@ -137,6 +198,25 @@ async def generate_questions(
     try:
         parsed = json.loads(sanitized_json)
         validated = QuestionGroup(**parsed)
+        
+        # Convert to dictionary for storage
+        questions_dict = [q.dict() for q in validated.questions]
+        
+        # Update screening run
+        update_screening_run_with_questions(
+            run_id=screening_run_id,
+            resume_id=resume_id,
+            questions=questions_dict
+        )
+        
+        # Log activity
+        log_activity(
+            user_id,
+            "questions_generated",
+            f"Generated {len(questions_dict)} questions for {candidate_name}",
+            screening_run_id
+        )
+        
         return validated
     except (json.JSONDecodeError, ValidationError) as e:
         error_detail = {

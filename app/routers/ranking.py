@@ -9,9 +9,17 @@ from typing import List, Dict, Tuple
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException
 from pydantic import BaseModel
 from sentence_transformers import SentenceTransformer, util
-from pathlib import Path
 from openai import OpenAI
 import os
+from datetime import datetime
+from config import (
+    get_job_details_collection,
+    get_resumes_collection,
+    get_batches_collection,
+    get_screening_runs_collection,
+    log_activity
+)
+from bson import ObjectId
 
 router = APIRouter(prefix="/rank", tags=["ranking"])
 
@@ -49,7 +57,6 @@ def extract_name_with_llm(resume_text: str) -> str:
     """
     
     try:
-        # Use the first 2000 characters to stay within token limits
         truncated_text = resume_text[:2000]
         response = openai_client.chat.completions.create(
             model="gpt-4o-mini",
@@ -80,18 +87,21 @@ class Candidate(BaseModel):
     justification: str
     email: str
     mobile_number: str
-    resume_content: str  # New field to store resume content
+    resume_content: str
+
+# New response model for ranking endpoint
+class RankingResponse(BaseModel):
+    run_id: str
+    candidates: List[Candidate]
 
 # --- Recursive Zip Processing ---
 def process_zip_file(z: zipfile.ZipFile):
     """Recursively process all PDF files in a zip archive"""
     pdf_files = []
     for entry in z.namelist():
-        # Skip directories (both with and without trailing slash)
         if entry.endswith('/') or '.' not in entry:
             continue
             
-        # Normalize path and check extension
         normalized = entry.lower().replace('\\', '/')
         if normalized.endswith('.pdf'):
             try:
@@ -102,25 +112,82 @@ def process_zip_file(z: zipfile.ZipFile):
                 print(f"      Error reading {entry}: {str(e)}")
     return pdf_files
 
+# --- Database Helpers ---
+def store_resume(user_id: str, batch_id: str, file_name: str, file_type: str, 
+                 content: str, embedding: list, candidate_name: str) -> str:
+    resume_doc = {
+        "user_id": user_id,
+        "batch_id": batch_id,
+        "file_name": file_name,
+        "file_type": file_type,
+        "content": content,
+        "embedding": embedding,
+        "candidate_name": candidate_name,
+        "created_at": datetime.utcnow()
+    }
+    result = get_resumes_collection().insert_one(resume_doc)
+    return str(result.inserted_id)
+
+def create_job_detail(user_id: str, job_role: str, job_description: str) -> str:
+    job_doc = {
+        "user_id": user_id,
+        "job_role": job_role,
+        "job_description": job_description,
+        "created_at": datetime.utcnow(),
+        "updated_at": datetime.utcnow()
+    }
+    result = get_job_details_collection().insert_one(job_doc)
+    return str(result.inserted_id)
+
+def create_batch(user_id: str, job_details_id: str, resume_ids: List[str]) -> str:
+    batch_doc = {
+        "user_id": user_id,
+        "job_details_id": job_details_id,
+        "resumes": resume_ids,
+        "created_at": datetime.utcnow()
+    }
+    result = get_batches_collection().insert_one(batch_doc)
+    return str(result.inserted_id)
+
+def store_screening_run(user_id: str, job_details_id: str, batch_id: str, 
+                        run_start: datetime, run_end: datetime, candidates: List[dict]) -> str:
+    run_doc = {
+        "user_id": user_id,
+        "job_details_id": job_details_id,
+        "batch_id": batch_id,
+        "run_start_time": run_start,
+        "run_end_time": run_end,
+        "candidates": candidates,
+        "created_at": datetime.utcnow()
+    }
+    result = get_screening_runs_collection().insert_one(run_doc)
+    return str(result.inserted_id)
+
 # --- API Endpoint ---
-@router.post("/", response_model=List[Candidate])
+@router.post("/", response_model=RankingResponse)
 async def rank_and_parse_resumes(
+    user_id: str = Form(...),
+    job_role: str = Form(""),
     job_desc: str = Form(...),
     files: List[UploadFile] = File(...)
 ):
-    total_start = time.time()
+    total_start = datetime.utcnow()
     print(f"\n{'='*80}")
     print("STARTING RESUME SCREENING PROCESS")
     print(f"{'='*80}")
     
+    # Create job detail
+    job_details_id = create_job_detail(user_id, job_role, job_desc)
+    log_activity(user_id, "job_created", f"Created job: {job_role}", job_details_id)
+    
     # Phase 1: File Processing
     print("\n[PHASE 1] PROCESSING UPLOADED FILES")
     file_start = time.time()
-    candidate_data = []  # (filename, resume_text, contact)
+    candidate_data = []  # (filename, resume_text, contact, file_bytes)
+    resume_ids = []
     num_files = len(files)
     num_pdfs = 0
     
-    # Process all files and extract text
     for i, f in enumerate(files):
         print(f"  Processing file {i+1}/{num_files}: {f.filename}")
         content = await f.read()
@@ -141,11 +208,7 @@ async def rank_and_parse_resumes(
                                 continue
                                 
                             contact = extract_contact_details(resume_text)
-                            candidate_data.append((
-                                filename,
-                                resume_text,
-                                contact
-                            ))
+                            candidate_data.append((filename, resume_text, contact, file_content))
                             num_pdfs += 1
                         except Exception as e:
                             print(f"        Error processing {filename}: {str(e)}")
@@ -160,11 +223,7 @@ async def rank_and_parse_resumes(
                     continue
                     
                 contact = extract_contact_details(resume_text)
-                candidate_data.append((
-                    f.filename,
-                    resume_text,
-                    contact
-                ))
+                candidate_data.append((f.filename, resume_text, contact, content))
                 num_pdfs += 1
             except Exception as e:
                 print(f"    Error processing PDF: {str(e)}")
@@ -172,6 +231,32 @@ async def rank_and_parse_resumes(
     if not candidate_data:
         print("\nERROR: No valid PDFs found in uploaded files")
         raise HTTPException(400, "No valid PDFs found.")
+    
+    # Create batch and store resumes
+    for i, (filename, resume_text, contact, file_bytes) in enumerate(candidate_data):
+        # Extract name later to avoid unnecessary LLM calls
+        resume_id = store_resume(
+            user_id=user_id,
+            batch_id="",  # Will update later
+            file_name=filename,
+            file_type="pdf",
+            content=resume_text,
+            embedding=[],  # Will add after calculation
+            candidate_name="Pending"
+        )
+        resume_ids.append(resume_id)
+        candidate_data[i] = (*candidate_data[i], resume_id)
+    
+    # Create batch with resume IDs
+    batch_id = create_batch(user_id, job_details_id, resume_ids)
+    log_activity(user_id, "batch_created", f"Created batch with {len(resume_ids)} resumes", batch_id)
+    
+    # Update resumes with batch ID
+    for resume_id in resume_ids:
+        get_resumes_collection().update_one(
+            {"_id": ObjectId(resume_id)},
+            {"$set": {"batch_id": batch_id}}
+        )
     
     file_time = time.time() - file_start
     print(f"\n[PHASE 1 COMPLETE] Processed {num_pdfs} PDFs in {file_time:.2f} seconds")
@@ -183,15 +268,22 @@ async def rank_and_parse_resumes(
     job_desc_emb = bi_encoder.encode(job_desc, convert_to_tensor=True, device=DEVICE)
     
     print(f"  Calculating similarity for {len(candidate_data)} candidates...")
-    # Calculate similarities
-    for i, (filename, resume_text, contact) in enumerate(candidate_data):
+    embeddings = []
+    for i, (filename, resume_text, contact, file_bytes, resume_id) in enumerate(candidate_data):
         resume_emb = bi_encoder.encode(resume_text, convert_to_tensor=True, device=DEVICE)
         similarity = util.cos_sim(job_desc_emb, resume_emb).item()
-        # Add similarity score to candidate data
+        embeddings.append((resume_id, resume_emb.cpu().numpy().tolist()))
         candidate_data[i] = (*candidate_data[i], similarity)
     
+    # Store embeddings
+    for resume_id, embedding in embeddings:
+        get_resumes_collection().update_one(
+            {"_id": ObjectId(resume_id)},
+            {"$set": {"embedding": embedding}}
+        )
+    
     # Sort by initial similarity
-    candidate_data.sort(key=lambda x: x[3], reverse=True)
+    candidate_data.sort(key=lambda x: x[5], reverse=True)
     top_20 = candidate_data[:20]
     screen_time = time.time() - screen_start
     print(f"\n[PHASE 2 COMPLETE] Top 20 candidates selected in {screen_time:.2f} seconds")
@@ -202,9 +294,16 @@ async def rank_and_parse_resumes(
     detailed_candidates = []
     
     print(f"  Analyzing top 20 candidates with LLM...")
-    for i, (filename, resume_text, contact, overall_sim) in enumerate(top_20):
+    for i, (filename, resume_text, contact, file_bytes, resume_id, overall_sim) in enumerate(top_20):
         # Extract name using LLM
         name = extract_name_with_llm(resume_text)
+        
+        # Update resume with name
+        get_resumes_collection().update_one(
+            {"_id": ObjectId(resume_id)},
+            {"$set": {"candidate_name": name}}
+        )
+        
         print(f"    Analyzing candidate {i+1}/20: {name} ({filename})")
         print(f"      Initial similarity: {overall_sim:.3f}")
         
@@ -214,9 +313,10 @@ async def rank_and_parse_resumes(
         print(f"      LLM fit score: {fit_score:.3f}")
         
         detailed_candidates.append({
+            "resume_id": resume_id,
             "filename": filename,
             "name": name,
-            "resume_text": resume_text,  # Keep resume text for final response
+            "resume_text": resume_text,
             "contact": contact,
             "overall_sim": overall_sim,
             "llm_analysis": analysis,
@@ -229,18 +329,20 @@ async def rank_and_parse_resumes(
     llm_time = time.time() - llm_start
     print(f"\n[PHASE 3 COMPLETE] LLM analysis completed in {llm_time:.2f} seconds")
     
-    # Prepare final response
+    # Prepare final response and screening run data
     print(f"\n[PHASE 4] PREPARING FINAL RESULTS")
     final_results = []
+    screening_candidates = []
+    
     for i, candidate in enumerate(top_10):
         analysis = candidate["llm_analysis"]
-        final_results.append(Candidate(
-            id=candidate["filename"],
+        final_candidate = Candidate(
+            id=candidate["resume_id"],
             name=candidate["name"],
-            fitScore=round(candidate["llm_fit_score"] * 100, 1),  # Convert to percentage with 1 decimal
+            fitScore=round(candidate["llm_fit_score"] * 100, 1),
             overall_similarity=round(candidate["overall_sim"], 4),
-            llm_fit_score=round(candidate["llm_fit_score"] * 100, 1),  # Percentage for display
-            total_experience=0,
+            llm_fit_score=round(candidate["llm_fit_score"] * 100, 1),
+            total_experience=0,  # Placeholder
             skills={
                 "exact_matches": analysis["technical_skills"].get("exact_matches", []),
                 "transferable": analysis["technical_skills"].get("transferable_skills", []),
@@ -252,11 +354,50 @@ async def rank_and_parse_resumes(
             justification=analysis.get("justification", ""),
             email=candidate["contact"]["email"],
             mobile_number=candidate["contact"]["mobile_number"],
-            resume_content=candidate["resume_text"]  # Add resume content here
-        ))
+            resume_content=candidate["resume_text"]
+        )
+        final_results.append(final_candidate)
+        
+        # Prepare for screening run storage
+        screening_candidate = {
+            "resume_id": candidate["resume_id"],
+            "candidate_name": candidate["name"],
+            "batch_id": batch_id,
+            "file_name": candidate["filename"],
+            "file_type": "pdf",
+            "ai_fit_score": final_candidate.fitScore,
+            "skill_similarity": candidate["overall_sim"],
+            "candidate_summary": final_candidate.summary,
+            "skill_assessment": {
+                "exact_matches": final_candidate.skills["exact_matches"],
+                "transferable_skills": final_candidate.skills["transferable"],
+                "non_technical_skills": final_candidate.skills["non_technical"]
+            },
+            "experience_highlights": final_candidate.experience_highlights,
+            "education_highlights": final_candidate.education_highlights,
+            "gaps": analysis.get("gaps", []),
+            "ai_justification": final_candidate.justification,
+            "resume_content_preview": candidate["resume_text"][:1000],
+            "questions_generated": False,
+            "generated_questions": [],
+            "alternate_candidate_searched": False,
+            "alternate_candidate": {}
+        }
+        screening_candidates.append(screening_candidate)
         print(f"  Prepared candidate {i+1}: {candidate['name']} - Fit: {candidate['llm_fit_score']:.3f}")
     
-    total_time = time.time() - total_start
+    # Store screening run
+    run_id = store_screening_run(
+        user_id=user_id,
+        job_details_id=job_details_id,
+        batch_id=batch_id,
+        run_start=total_start,
+        run_end=datetime.utcnow(),
+        candidates=screening_candidates
+    )
+    log_activity(user_id, "screening_run", f"Screening run completed for {len(candidate_data)} candidates", run_id)
+    
+    total_time = time.time() - total_start.timestamp()
     
     # Performance summary
     print(f"\n{'='*80}")
@@ -270,7 +411,10 @@ async def rank_and_parse_resumes(
     print(f"Top candidate: {top_10[0]['name']} - Fit: {top_10[0]['llm_fit_score']:.3f}")
     print(f"{'='*80}")
     
-    return final_results
+    return {
+        "run_id": run_id,
+        "candidates": final_results
+    }
 
 # --- LLM Analysis ---
 def analyze_with_llm(jd_text: str, resume_text: str) -> Dict:
@@ -301,7 +445,8 @@ def analyze_with_llm(jd_text: str, resume_text: str) -> Dict:
         "non_technical_skills": [],
         "experience_highlights": "",
         "education_highlights": "",
-        "justification": ""
+        "justification": "",
+        "gaps": []
     }
     
     Guidelines:
@@ -338,5 +483,6 @@ def analyze_with_llm(jd_text: str, resume_text: str) -> Dict:
             "non_technical_skills": [],
             "experience_highlights": "",
             "education_highlights": "",
-            "justification": ""
+            "justification": "",
+            "gaps": []
         }
