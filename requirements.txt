@@ -4,3 +4,8 @@ PyMuPDF
 torch
 sentence-transformers
 python-multipart
+python-dotenv
+passlib
+python-jose
+pydantic
+pydantic[email]

@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from routers import alternates, questions, ranking
+from auth import auth as auth_router
 from fastapi.middleware.cors import CORSMiddleware
 
 origins = [
@@ -7,7 +8,7 @@ origins = [
     "http://127.0.0.1:5173",
 ]
 
-app = FastAPI(title="Talynx: AI-Powered HR System")
+app = FastAPI(title="Kandidex: AI-Powered HR System")
 
 app.add_middleware(
     CORSMiddleware,
@@ -20,3 +21,4 @@ app.add_middleware(
 app.include_router(alternates.router)
 app.include_router(questions.router)
 app.include_router(ranking.router)
+app.include_router(auth_router.router)  # Add this line
