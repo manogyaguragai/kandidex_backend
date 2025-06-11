@@ -10,7 +10,7 @@ class UserCreate(UserBase):
     password: str
 
 class User(UserBase):
-    id: str
+    _id: str
     disabled: bool = False
     created_at: datetime
 

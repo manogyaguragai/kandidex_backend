@@ -24,7 +24,7 @@ async def register(user: UserCreate):
         )
     
     user_dict = user.dict()
-    user_dict["id"] = str(uuid.uuid4())
+    # user_dict["id"] = str(uuid.uuid4())
     user_dict["hashed_password"] = get_password_hash(user.password)
     user_dict["created_at"] = datetime.utcnow()
     user_dict["disabled"] = False
