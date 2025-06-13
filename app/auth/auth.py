@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
-from config import get_user_collection
+from config import get_user_collection, get_settings_collection
 from utils.security import (
     verify_password, 
     create_access_token, 
@@ -26,13 +26,23 @@ async def register(user: UserCreate):
     user_dict = user.dict()
     # user_dict["id"] = str(uuid.uuid4())
     user_dict["hashed_password"] = get_password_hash(user.password)
-    user_dict["created_at"] = datetime.utcnow()
+    user_dict["created_at"] = datetime.now()
     user_dict["disabled"] = False
     
     # Remove plain password before storing
     del user_dict["password"]
     
     result = users_collection.insert_one(user_dict)
+    settings_collection = get_settings_collection()
+    settings_collection.insert_one(
+        {"user_id": str(result.inserted_id),
+        "created_at": datetime.now(),
+        "number_of_questions_to_generate": 10,
+        "phase1_ranking_number": 20,
+        "phase2_ranking_number": 10,
+        "updated_at": datetime.now()}
+        )
+    
     print("USER Created")
     if not result.inserted_id:
         raise HTTPException(

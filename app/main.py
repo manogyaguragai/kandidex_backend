@@ -1,5 +1,5 @@
 from fastapi import FastAPI
-from routers import alternates, questions, ranking, screening_runs
+from routers import alternates, questions, ranking, screening_runs, settings
 from auth import auth as auth_router
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -23,3 +23,4 @@ app.include_router(questions.router)
 app.include_router(ranking.router)
 app.include_router(auth_router.router)
 app.include_router(screening_runs.router)
+app.include_router(settings.router)

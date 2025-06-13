@@ -29,4 +29,4 @@ class RankingResult(BaseModel):
     job_desc: str
     candidates: list
     user_id: str
-    created_at: datetime = datetime.utcnow()
+    created_at: datetime = datetime.now()

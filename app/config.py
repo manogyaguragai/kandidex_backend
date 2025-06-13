@@ -34,13 +34,15 @@ def get_screening_runs_collection():
 def get_activity_logs_collection():
     return get_db().activity_logs
 
+def get_settings_collection():
+    return get_db().settings
 # Activity logging
 def log_activity(user_id: str, activity_type: str, details: str, ref_id: str = None):
     activity = {
         "user_id": user_id,
         "type": activity_type,
         "ref_id": ref_id,
-        "timestamp": datetime.utcnow(),
+        "timestamp": datetime.now(),
         "details": details
     }
     get_activity_logs_collection().insert_one(activity)
