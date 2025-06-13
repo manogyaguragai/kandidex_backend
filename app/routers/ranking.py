@@ -5,11 +5,12 @@ import fitz
 import torch
 import time
 import json
+import asyncio
 from typing import List, Dict, Tuple
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException
 from pydantic import BaseModel
 from sentence_transformers import SentenceTransformer, util
-from openai import OpenAI
+from openai import AsyncOpenAI
 import os
 from datetime import datetime
 from config import (
@@ -28,7 +29,28 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 # Initialize models
 bi_encoder = SentenceTransformer('all-MiniLM-L6-v2', device=DEVICE)
 bi_encoder.max_seq_length = 512
-openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+aopenai = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+class Candidate(BaseModel):
+    id: str
+    name: str
+    file_name: str
+    fitScore: float
+    overall_similarity: float
+    llm_fit_score: float
+    total_experience: float
+    skills: Dict[str, List[str]]
+    education_highlights: str
+    experience_highlights: str
+    summary: str
+    justification: str
+    email: str
+    mobile_number: str
+    resume_content: str
+
+class RankingResponse(BaseModel):
+    run_id: str
+    candidates: List[Candidate]
 
 # --- Extraction Helpers ---
 def extract_text_from_pdf_bytes(file_bytes: bytes) -> str:
@@ -45,54 +67,6 @@ def extract_contact_details(text: str) -> Dict[str, str]:
     emails = re.findall(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}", text)
     phones = re.findall(r"\+?\d[\d\s().-]{8,}\d", text)
     return {"email": emails[0] if emails else "", "mobile_number": phones[0] if phones else ""}
-
-def extract_name_with_llm(resume_text: str) -> str:
-    """Extract candidate name using LLM"""
-    NAME_PROMPT = """
-    Extract the candidate's full name from the following resume text. 
-    Return ONLY the name in JSON format like {"name": "John Doe"}. 
-    If no name is found, return {"name": "Unknown"}.
-    
-    Resume Text:
-    """
-    
-    try:
-        truncated_text = resume_text[:2000]
-        response = openai_client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": NAME_PROMPT + truncated_text}
-            ],
-            response_format={"type": "json_object"},
-            temperature=0.0
-        )
-        
-        result = json.loads(response.choices[0].message.content)
-        return result.get("name", "Unknown")
-    except Exception as e:
-        print(f"Name extraction error: {str(e)}")
-        return "Unknown"
-
-class Candidate(BaseModel):
-    id: str
-    name: str
-    fitScore: float
-    overall_similarity: float
-    llm_fit_score: float
-    total_experience: float
-    skills: Dict[str, List[str]]
-    education_highlights: str
-    experience_highlights: str
-    summary: str
-    justification: str
-    email: str
-    mobile_number: str
-    resume_content: str
-
-# New response model for ranking endpoint
-class RankingResponse(BaseModel):
-    run_id: str
-    candidates: List[Candidate]
 
 # --- Recursive Zip Processing ---
 def process_zip_file(z: zipfile.ZipFile):
@@ -112,6 +86,96 @@ def process_zip_file(z: zipfile.ZipFile):
                 print(f"      Error reading {entry}: {str(e)}")
     return pdf_files
 
+# --- Async LLM Functions ---
+async def extract_name_with_llm(resume_text: str) -> str:
+    """Extract candidate name using LLM (async)"""
+    NAME_PROMPT = """
+    Extract the candidate's full name from the following resume text. 
+    Return ONLY the name in JSON format like {"name": "John Doe"}. 
+    If no name is found, return {"name": "Unknown"}.
+    """
+    
+    try:
+        truncated_text = resume_text[:2000]
+        response = await aopenai.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": NAME_PROMPT},
+                {"role": "user", "content": truncated_text}
+            ],
+            response_format={"type": "json_object"},
+            temperature=0.0
+        )
+        
+        result = json.loads(response.choices[0].message.content)
+        return result.get("name", "Unknown")
+    except Exception as e:
+        print(f"Name extraction error: {str(e)}")
+        return "Unknown"
+
+async def extract_names_with_llm_batch(resume_texts: List[str]) -> List[str]:
+    """Batch extract candidate names using LLM"""
+    tasks = [extract_name_with_llm(text) for text in resume_texts]
+    return await asyncio.gather(*tasks)
+
+async def analyze_one_resume_with_llm(jd_text: str, resume_text: str) -> Dict:
+    """Analyze one candidate with LLM (async)"""
+    SYSTEM_PROMPT = """
+    You are an expert HR analyst. Analyze a candidate's resume against a job description and provide:
+    1. Overall summary (1-2 sentences)
+    2. Comprehensive fit score (0-100%) 
+    3. Skill highlights (technical and non-technical)
+    4. Experience highlights
+    5. Education highlights
+    6. Justification for the fit score
+    7. List of identified skill/experience gaps
+    
+    Output format (JSON):
+    {
+        "overall_summary": "",
+        "fit_score": 0,
+        "technical_skills": {
+            "exact_matches": [],
+            "transferable_skills": []
+        },
+        "non_technical_skills": [],
+        "experience_highlights": "",
+        "education_highlights": "",
+        "justification": "",
+        "gaps": []
+    }
+    """
+    
+    try:
+        response = await aopenai.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": f"Job Description:\n{jd_text}\n\nResume:\n{resume_text}"}
+            ],
+            response_format={"type": "json_object"},
+            temperature=0.1
+        )
+        
+        return json.loads(response.choices[0].message.content)
+    except Exception as e:
+        print(f"LLM Error: {str(e)}")
+        return {
+            "overall_summary": "Analysis failed",
+            "fit_score": 0,
+            "technical_skills": {"exact_matches": [], "transferable_skills": []},
+            "non_technical_skills": [],
+            "experience_highlights": "",
+            "education_highlights": "",
+            "justification": "",
+            "gaps": []
+        }
+
+async def analyze_with_llm_batch(jd_text: str, resume_texts: List[str]) -> List[Dict]:
+    """Batch analyze candidates with LLM"""
+    tasks = [analyze_one_resume_with_llm(jd_text, text) for text in resume_texts]
+    return await asyncio.gather(*tasks)
+
 # --- Database Helpers ---
 def store_resume(user_id: str, batch_id: str, file_name: str, file_type: str, 
                  content: str, embedding: list, candidate_name: str) -> str:
@@ -123,7 +187,7 @@ def store_resume(user_id: str, batch_id: str, file_name: str, file_type: str,
         "content": content,
         "embedding": embedding,
         "candidate_name": candidate_name,
-        "created_at": datetime.utcnow()
+        "created_at": datetime.now()
     }
     result = get_resumes_collection().insert_one(resume_doc)
     return str(result.inserted_id)
@@ -133,8 +197,8 @@ def create_job_detail(user_id: str, job_role: str, job_description: str) -> str:
         "user_id": user_id,
         "job_role": job_role,
         "job_description": job_description,
-        "created_at": datetime.utcnow(),
-        "updated_at": datetime.utcnow()
+        "created_at": datetime.now(),
+        "updated_at": datetime.now()
     }
     result = get_job_details_collection().insert_one(job_doc)
     return str(result.inserted_id)
@@ -144,7 +208,7 @@ def create_batch(user_id: str, job_details_id: str, resume_ids: List[str]) -> st
         "user_id": user_id,
         "job_details_id": job_details_id,
         "resumes": resume_ids,
-        "created_at": datetime.utcnow()
+        "created_at": datetime.now()
     }
     result = get_batches_collection().insert_one(batch_doc)
     return str(result.inserted_id)
@@ -158,7 +222,7 @@ def store_screening_run(user_id: str, job_details_id: str, batch_id: str,
         "run_start_time": run_start,
         "run_end_time": run_end,
         "candidates": candidates,
-        "created_at": datetime.utcnow()
+        "created_at": datetime.now()
     }
     result = get_screening_runs_collection().insert_one(run_doc)
     return str(result.inserted_id)
@@ -171,7 +235,7 @@ async def rank_and_parse_resumes(
     job_desc: str = Form(...),
     files: List[UploadFile] = File(...)
 ):
-    total_start = datetime.utcnow()
+    total_start = datetime.now()
     print(f"\n{'='*80}")
     print("STARTING RESUME SCREENING PROCESS")
     print(f"{'='*80}")
@@ -183,7 +247,7 @@ async def rank_and_parse_resumes(
     # Phase 1: File Processing
     print("\n[PHASE 1] PROCESSING UPLOADED FILES")
     file_start = time.time()
-    candidate_data = []  # (filename, resume_text, contact, file_bytes)
+    candidate_data = []  # (filename, resume_text, contact, resume_id)
     resume_ids = []
     num_files = len(files)
     num_pdfs = 0
@@ -208,7 +272,7 @@ async def rank_and_parse_resumes(
                                 continue
                                 
                             contact = extract_contact_details(resume_text)
-                            candidate_data.append((filename, resume_text, contact, file_content))
+                            candidate_data.append((filename, resume_text, contact))
                             num_pdfs += 1
                         except Exception as e:
                             print(f"        Error processing {filename}: {str(e)}")
@@ -223,7 +287,7 @@ async def rank_and_parse_resumes(
                     continue
                     
                 contact = extract_contact_details(resume_text)
-                candidate_data.append((f.filename, resume_text, contact, content))
+                candidate_data.append((f.filename, resume_text, contact))
                 num_pdfs += 1
             except Exception as e:
                 print(f"    Error processing PDF: {str(e)}")
@@ -233,8 +297,7 @@ async def rank_and_parse_resumes(
         raise HTTPException(400, "No valid PDFs found.")
     
     # Create batch and store resumes
-    for i, (filename, resume_text, contact, file_bytes) in enumerate(candidate_data):
-        # Extract name later to avoid unnecessary LLM calls
+    for i, (filename, resume_text, contact) in enumerate(candidate_data):
         resume_id = store_resume(
             user_id=user_id,
             batch_id="",  # Will update later
@@ -245,7 +308,7 @@ async def rank_and_parse_resumes(
             candidate_name="Pending"
         )
         resume_ids.append(resume_id)
-        candidate_data[i] = (*candidate_data[i], resume_id)
+        candidate_data[i] = (filename, resume_text, contact, resume_id)
     
     # Create batch with resume IDs
     batch_id = create_batch(user_id, job_details_id, resume_ids)
@@ -269,11 +332,11 @@ async def rank_and_parse_resumes(
     
     print(f"  Calculating similarity for {len(candidate_data)} candidates...")
     embeddings = []
-    for i, (filename, resume_text, contact, file_bytes, resume_id) in enumerate(candidate_data):
+    for i, (filename, resume_text, contact, resume_id) in enumerate(candidate_data):
         resume_emb = bi_encoder.encode(resume_text, convert_to_tensor=True, device=DEVICE)
         similarity = util.cos_sim(job_desc_emb, resume_emb).item()
         embeddings.append((resume_id, resume_emb.cpu().numpy().tolist()))
-        candidate_data[i] = (*candidate_data[i], similarity)
+        candidate_data[i] = (filename, resume_text, contact, resume_id, similarity)
     
     # Store embeddings
     for resume_id, embedding in embeddings:
@@ -283,34 +346,52 @@ async def rank_and_parse_resumes(
         )
     
     # Sort by initial similarity
-    candidate_data.sort(key=lambda x: x[5], reverse=True)
+    candidate_data.sort(key=lambda x: x[4], reverse=True)  # Index 4 is similarity
     top_20 = candidate_data[:20]
+    print(f"Selected top 20 candidates based on similarity:\n")
+    for candidate in top_20:
+        filename, resume_text, contact, resume_id, similarity = candidate
+        print(f"  {filename} | Similarity: {similarity*100:.2f}%")
+    
     screen_time = time.time() - screen_start
     print(f"\n[PHASE 2 COMPLETE] Top 20 candidates selected in {screen_time:.2f} seconds")
     
-    # Phase 3: LLM Analysis
-    print(f"\n[PHASE 3] DETAILED LLM ANALYSIS")
+    # Phase 3: Async LLM Processing
+    print(f"\n[PHASE 3] ASYNC LLM PROCESSING")
     llm_start = time.time()
-    detailed_candidates = []
     
-    print(f"  Analyzing top 20 candidates with LLM...")
-    for i, (filename, resume_text, contact, file_bytes, resume_id, overall_sim) in enumerate(top_20):
-        # Extract name using LLM
-        name = extract_name_with_llm(resume_text)
-        
-        # Update resume with name
+    # Prepare batch data for LLM
+    resume_texts_top20 = [candidate[1] for candidate in top_20]  # Index 1 is resume_text
+    
+    # Batch name extraction
+    print("  Starting batch name extraction...")
+    name_start = time.time()
+    names = await extract_names_with_llm_batch(resume_texts_top20)
+    name_time = time.time() - name_start
+    print(f"  Batch name extraction completed in {name_time:.2f} seconds")
+    
+    # Update database with names
+    for i, (candidate, name) in enumerate(zip(top_20, names)):
+        filename, resume_text, contact, resume_id, similarity = candidate
         get_resumes_collection().update_one(
             {"_id": ObjectId(resume_id)},
             {"$set": {"candidate_name": name}}
         )
-        
-        print(f"    Analyzing candidate {i+1}/20: {name} ({filename})")
-        print(f"      Initial similarity: {overall_sim:.3f}")
-        
-        # Get detailed analysis from LLM
-        analysis = analyze_with_llm(job_desc, resume_text)
+        top_20[i] = (filename, resume_text, contact, resume_id, similarity, name)
+    
+    # Batch detailed analysis
+    print("  Starting batch detailed analysis...")
+    analysis_start = time.time()
+    analyses = await analyze_with_llm_batch(job_desc, resume_texts_top20)
+    analysis_time = time.time() - analysis_start
+    print(f"  Batch analysis completed in {analysis_time:.2f} seconds")
+    
+    # Process results
+    detailed_candidates = []
+    for i, candidate in enumerate(top_20):
+        filename, resume_text, contact, resume_id, similarity, name = candidate
+        analysis = analyses[i]
         fit_score = analysis.get("fit_score", 0) / 100.0
-        print(f"      LLM fit score: {fit_score:.3f}")
         
         detailed_candidates.append({
             "resume_id": resume_id,
@@ -318,7 +399,7 @@ async def rank_and_parse_resumes(
             "name": name,
             "resume_text": resume_text,
             "contact": contact,
-            "overall_sim": overall_sim,
+            "overall_sim": similarity,
             "llm_analysis": analysis,
             "llm_fit_score": fit_score
         })
@@ -327,7 +408,7 @@ async def rank_and_parse_resumes(
     detailed_candidates.sort(key=lambda x: x["llm_fit_score"], reverse=True)
     top_10 = detailed_candidates[:10]
     llm_time = time.time() - llm_start
-    print(f"\n[PHASE 3 COMPLETE] LLM analysis completed in {llm_time:.2f} seconds")
+    print(f"\n[PHASE 3 COMPLETE] LLM processing completed in {llm_time:.2f} seconds")
     
     # Prepare final response and screening run data
     print(f"\n[PHASE 4] PREPARING FINAL RESULTS")
@@ -339,6 +420,7 @@ async def rank_and_parse_resumes(
         final_candidate = Candidate(
             id=candidate["resume_id"],
             name=candidate["name"],
+            file_name=candidate["filename"],
             fitScore=round(candidate["llm_fit_score"] * 100, 1),
             overall_similarity=round(candidate["overall_sim"], 4),
             llm_fit_score=round(candidate["llm_fit_score"] * 100, 1),
@@ -392,12 +474,12 @@ async def rank_and_parse_resumes(
         job_details_id=job_details_id,
         batch_id=batch_id,
         run_start=total_start,
-        run_end=datetime.utcnow(),
+        run_end=datetime.now(),
         candidates=screening_candidates
     )
     log_activity(user_id, "screening_run", f"Screening run completed for {len(candidate_data)} candidates", run_id)
     
-    total_time = time.time() - total_start.timestamp()
+    total_time = (datetime.now() - total_start).total_seconds()
     
     # Performance summary
     print(f"\n{'='*80}")
@@ -406,7 +488,7 @@ async def rank_and_parse_resumes(
     print(f"Total candidates processed: {len(candidate_data)}")
     print(f"Files processed: {num_files} ({num_pdfs} PDFs extracted)")
     print(f"Initial screening time: {screen_time:.2f} seconds")
-    print(f"LLM analysis time: {llm_time:.2f} seconds")
+    print(f"LLM processing time: {llm_time:.2f} seconds (Names: {name_time:.2f}s, Analysis: {analysis_time:.2f}s)")
     print(f"Total processing time: {total_time:.2f} seconds")
     print(f"Top candidate: {top_10[0]['name']} - Fit: {top_10[0]['llm_fit_score']:.3f}")
     print(f"{'='*80}")
@@ -415,74 +497,3 @@ async def rank_and_parse_resumes(
         "run_id": run_id,
         "candidates": final_results
     }
-
-# --- LLM Analysis ---
-def analyze_with_llm(jd_text: str, resume_text: str) -> Dict:
-    """Analyze candidate with LLM to compute detailed fit score"""
-    SYSTEM_PROMPT = """
-    You are an expert HR analyst. Analyze a candidate's resume against a job description and provide:
-    1. Overall summary (1-2 sentences)
-    2. Comprehensive fit score (0-100%) based on:
-       - Technical skills (exact matches and transferable skills)
-       - Non-technical skills
-       - Experience relevance
-       - Education qualifications
-    3. If skills are similar, assign fit score based on how closely the skills match the job requirements
-    4. Skill highlights (technical and non-technical)
-    5. Experience highlights
-    6. Education highlights
-    7. Justification for the fit score
-    8. You can also assign a low score if the skills are not in line with the job description
-    
-    Output format (JSON):
-    {
-        "overall_summary": "",
-        "fit_score": 0,
-        "technical_skills": {
-            "exact_matches": [],
-            "transferable_skills": []
-        },
-        "non_technical_skills": [],
-        "experience_highlights": "",
-        "education_highlights": "",
-        "justification": "",
-        "gaps": []
-    }
-    
-    Guidelines:
-    - Be objective and critical
-    - Transferable skills: show how non-direct experience could be valuable
-    - Fit score: percentage reflecting overall suitability
-    - Highlight most relevant qualifications
-    """
-    
-    try:
-        print(f"  Sending analysis request to LLM...")
-        start_time = time.time()
-        
-        response = openai_client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": f"Job Description:\n{jd_text}\n\nResume:\n{resume_text}"}
-            ],
-            response_format={"type": "json_object"},
-            temperature=0.1
-        )
-        
-        result = json.loads(response.choices[0].message.content)
-        elapsed = time.time() - start_time
-        print(f"  LLM analysis completed in {elapsed:.2f} seconds")
-        return result
-    except Exception as e:
-        print(f"  LLM Error: {str(e)}")
-        return {
-            "overall_summary": "Analysis failed",
-            "fit_score": 0,
-            "technical_skills": {"exact_matches": [], "transferable_skills": []},
-            "non_technical_skills": [],
-            "experience_highlights": "",
-            "education_highlights": "",
-            "justification": "",
-            "gaps": []
-        }
