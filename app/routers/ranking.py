@@ -18,6 +18,7 @@ from config import (
     get_resumes_collection,
     get_batches_collection,
     get_screening_runs_collection,
+    get_settings_collection,
     log_activity
 )
 from bson import ObjectId
@@ -50,6 +51,7 @@ class Candidate(BaseModel):
 
 class RankingResponse(BaseModel):
     run_id: str
+    user_id: str
     candidates: List[Candidate]
 
 # --- Extraction Helpers ---
@@ -235,9 +237,22 @@ async def rank_and_parse_resumes(
     job_desc: str = Form(...),
     files: List[UploadFile] = File(...)
 ):
+    # Fetch user settings for phase ranking numbers
+    user_settings = get_settings_collection().find_one({"user_id": user_id})
+    
+    # Set default values if settings not found
+    phase1_limit = user_settings.get("phase1_ranking_number", 20) if user_settings else 20
+    phase2_limit = user_settings.get("phase2_ranking_number", 10) if user_settings else 10
+    
+    # Validate limits
+    if phase1_limit <= 0 or phase2_limit <= 0:
+        raise HTTPException(400, "Ranking numbers must be positive values")
+    if phase1_limit < phase2_limit:
+        raise HTTPException(400, "Phase1 limit must be greater than or equal to Phase2 limit")
+    
     total_start = datetime.now()
     print(f"\n{'='*80}")
-    print("STARTING RESUME SCREENING PROCESS")
+    print(f"STARTING RESUME SCREENING PROCESS (Phase1: {phase1_limit}, Phase2: {phase2_limit})")
     print(f"{'='*80}")
     
     # Create job detail
@@ -347,48 +362,50 @@ async def rank_and_parse_resumes(
     
     # Sort by initial similarity
     candidate_data.sort(key=lambda x: x[4], reverse=True)  # Index 4 is similarity
-    top_20 = candidate_data[:20]
-    print(f"Selected top 20 candidates based on similarity:\n")
-    for candidate in top_20:
+    
+    # Use phase1_limit instead of hardcoded 20
+    topp1 = candidate_data[:phase1_limit]
+    print(f"Selected top {phase1_limit} candidates based on similarity:\n")
+    for candidate in topp1:
         filename, resume_text, contact, resume_id, similarity = candidate
         print(f"  {filename} | Similarity: {similarity*100:.2f}%")
     
     screen_time = time.time() - screen_start
-    print(f"\n[PHASE 2 COMPLETE] Top 20 candidates selected in {screen_time:.2f} seconds")
+    print(f"\n[PHASE 2 COMPLETE] Top {phase1_limit} candidates selected in {screen_time:.2f} seconds")
     
     # Phase 3: Async LLM Processing
     print(f"\n[PHASE 3] ASYNC LLM PROCESSING")
     llm_start = time.time()
     
-    # Prepare batch data for LLM
-    resume_texts_top20 = [candidate[1] for candidate in top_20]  # Index 1 is resume_text
+    # Prepare batch data for LLM - use topp1 instead of top_20
+    resume_texts_topp1 = [candidate[1] for candidate in topp1]  # Index 1 is resume_text
     
     # Batch name extraction
     print("  Starting batch name extraction...")
     name_start = time.time()
-    names = await extract_names_with_llm_batch(resume_texts_top20)
+    names = await extract_names_with_llm_batch(resume_texts_topp1)
     name_time = time.time() - name_start
     print(f"  Batch name extraction completed in {name_time:.2f} seconds")
     
     # Update database with names
-    for i, (candidate, name) in enumerate(zip(top_20, names)):
+    for i, (candidate, name) in enumerate(zip(topp1, names)):
         filename, resume_text, contact, resume_id, similarity = candidate
         get_resumes_collection().update_one(
             {"_id": ObjectId(resume_id)},
             {"$set": {"candidate_name": name}}
         )
-        top_20[i] = (filename, resume_text, contact, resume_id, similarity, name)
+        topp1[i] = (filename, resume_text, contact, resume_id, similarity, name)
     
     # Batch detailed analysis
     print("  Starting batch detailed analysis...")
     analysis_start = time.time()
-    analyses = await analyze_with_llm_batch(job_desc, resume_texts_top20)
+    analyses = await analyze_with_llm_batch(job_desc, resume_texts_topp1)
     analysis_time = time.time() - analysis_start
     print(f"  Batch analysis completed in {analysis_time:.2f} seconds")
     
     # Process results
     detailed_candidates = []
-    for i, candidate in enumerate(top_20):
+    for i, candidate in enumerate(topp1):
         filename, resume_text, contact, resume_id, similarity, name = candidate
         analysis = analyses[i]
         fit_score = analysis.get("fit_score", 0) / 100.0
@@ -406,7 +423,9 @@ async def rank_and_parse_resumes(
     
     # Sort by LLM fit score
     detailed_candidates.sort(key=lambda x: x["llm_fit_score"], reverse=True)
-    top_10 = detailed_candidates[:10]
+    
+    # Use phase2_limit instead of hardcoded 10
+    topp2 = detailed_candidates[:phase2_limit]
     llm_time = time.time() - llm_start
     print(f"\n[PHASE 3 COMPLETE] LLM processing completed in {llm_time:.2f} seconds")
     
@@ -415,7 +434,8 @@ async def rank_and_parse_resumes(
     final_results = []
     screening_candidates = []
     
-    for i, candidate in enumerate(top_10):
+    # Use topp2 instead of top_10
+    for i, candidate in enumerate(topp2):
         analysis = candidate["llm_analysis"]
         final_candidate = Candidate(
             id=candidate["resume_id"],
@@ -477,11 +497,13 @@ async def rank_and_parse_resumes(
         run_end=datetime.now(),
         candidates=screening_candidates
     )
-    log_activity(user_id, "screening_run", f"Screening run completed for {len(candidate_data)} candidates", run_id)
+    log_activity(user_id, "screening_run", 
+                 f"Screening run completed for {len(candidate_data)} candidates (Phase1: {phase1_limit}, Phase2: {phase2_limit})", 
+                 run_id)
     
     total_time = (datetime.now() - total_start).total_seconds()
     
-    # Performance summary
+    # Performance summary - updated with dynamic limits
     print(f"\n{'='*80}")
     print("PROCESSING SUMMARY")
     print(f"{'='*80}")
@@ -490,10 +512,16 @@ async def rank_and_parse_resumes(
     print(f"Initial screening time: {screen_time:.2f} seconds")
     print(f"LLM processing time: {llm_time:.2f} seconds (Names: {name_time:.2f}s, Analysis: {analysis_time:.2f}s)")
     print(f"Total processing time: {total_time:.2f} seconds")
-    print(f"Top candidate: {top_10[0]['name']} - Fit: {top_10[0]['llm_fit_score']:.3f}")
+    print(f"Phase1 candidates: {phase1_limit}")
+    print(f"Phase2 candidates: {phase2_limit}")
+    print(f"Top candidate: {topp2[0]['name']} - Fit: {topp2[0]['llm_fit_score']:.3f}")
     print(f"{'='*80}")
     
-    return {
+    results = {
         "run_id": run_id,
+        "user_id": user_id,
         "candidates": final_results
     }
+    
+    print(results)
+    return results
