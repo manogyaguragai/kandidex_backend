@@ -9,3 +9,4 @@ passlib
 python-jose
 pydantic
 pydantic[email]
+openai
