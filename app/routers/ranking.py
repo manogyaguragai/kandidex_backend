@@ -523,5 +523,4 @@ async def rank_and_parse_resumes(
         "candidates": final_results
     }
     
-    print(results)
     return results
