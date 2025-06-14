@@ -10,3 +10,4 @@ python-jose
 pydantic
 pydantic[email]
 openai
+pymongo
