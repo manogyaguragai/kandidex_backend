@@ -2,10 +2,12 @@ import os
 from pymongo import MongoClient
 from dotenv import load_dotenv
 from datetime import datetime
+from pathlib import Path
 
-load_dotenv('/home/manogyaguragai/Desktop/Projects/talynx_backend/.env')
+BASE_DIR = Path(__file__).resolve().parent.parent
+load_dotenv(BASE_DIR / '.env')  
 
-MONGODB_URL = os.getenv("MONGO_URI", "mongodb://localhost:27017/")
+MONGODB_URL = os.getenv("MONGODB_URI")
 DB_NAME = os.getenv("MONGODB_DB_NAME", "KandidexDB")
 JWT_SECRET = os.getenv("JWT_SECRET_KEY")
 JWT_ALGORITHM = os.getenv("JWT_ALGORITHM")

@@ -20,7 +20,6 @@ class PasswordReset(BaseModel):
     
 @router.post("/register", response_model=User)
 async def register(user: UserCreate):
-    print("USER Creation")
     users_collection = get_user_collection()
     
     if users_collection.find_one({"email": user.email}):
