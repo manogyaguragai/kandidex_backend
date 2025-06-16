@@ -3,15 +3,19 @@ from pymongo import MongoClient
 from dotenv import load_dotenv
 from datetime import datetime
 from pathlib import Path
+import json
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-load_dotenv(BASE_DIR / '.env')  
+config_path = BASE_DIR / 'config.json'
 
-MONGODB_URL = os.getenv("MONGODB_URI")
-DB_NAME = os.getenv("MONGODB_DB_NAME", "KandidexDB")
-JWT_SECRET = os.getenv("JWT_SECRET_KEY")
-JWT_ALGORITHM = os.getenv("JWT_ALGORITHM")
-ACCESS_TOKEN_EXPIRE = int(os.getenv("JWT_ACCESS_TOKEN_EXPIRE_MINUTES", 30))
+with open(config_path) as config_file:
+    config = json.load(config_file)
+
+MONGODB_URL = config["MONGODB_URI"]
+DB_NAME = config.get("MONGODB_DB_NAME", "KandidexDB")
+JWT_SECRET = config["JWT_SECRET_KEY"]
+JWT_ALGORITHM = config["JWT_ALGORITHM"]
+ACCESS_TOKEN_EXPIRE = int(config.get("JWT_ACCESS_TOKEN_EXPIRE_MINUTES", 30))
 
 def get_db():
     client = MongoClient(MONGODB_URL)
