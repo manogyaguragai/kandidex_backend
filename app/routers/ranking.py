@@ -547,4 +547,4 @@ async def rank_and_parse_resumes(
         "candidates": final_results
     }
     
-    return resultsx
+    return results
