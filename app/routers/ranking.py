@@ -25,11 +25,7 @@ from bson import ObjectId
 
 router = APIRouter(prefix="/rank", tags=["ranking"])
 
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-
-# Initialize models
-bi_encoder = SentenceTransformer('all-MiniLM-L6-v2', device=DEVICE)
-bi_encoder.max_seq_length = 512
+# Initialize OpenAI client
 aopenai = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 class Candidate(BaseModel):
@@ -229,6 +225,26 @@ def store_screening_run(user_id: str, job_details_id: str, batch_id: str,
     result = get_screening_runs_collection().insert_one(run_doc)
     return str(result.inserted_id)
 
+# --- Device Handling ---
+def get_device():
+    """Dynamically determine the best available device with error handling"""
+    try:
+        # Check CUDA availability
+        if torch.cuda.is_available():
+            print("CUDA is available - using GPU")
+            # Test a small operation to verify functionality
+            test_tensor = torch.tensor([1.0]).cuda()
+            if test_tensor.device.type == 'cuda':
+                print("GPU operations verified")
+                return "cuda"
+            else:
+                print("CUDA test failed - falling back to CPU")
+                return "cpu"
+        return "cpu"
+    except Exception as e:
+        print(f"CUDA initialization failed: {str(e)} - Using CPU")
+        return "cpu"
+
 # --- API Endpoint ---
 @router.post("/", response_model=RankingResponse)
 async def rank_and_parse_resumes(
@@ -237,6 +253,14 @@ async def rank_and_parse_resumes(
     job_desc: str = Form(...),
     files: List[UploadFile] = File(...)
 ):
+    # Dynamically determine device at runtime
+    DEVICE = get_device()
+    print(f"Using device: {DEVICE}")
+    
+    # Initialize models AFTER device determination
+    bi_encoder = SentenceTransformer('all-MiniLM-L6-v2', device=DEVICE)
+    bi_encoder.max_seq_length = 512
+
     # Fetch user settings for phase ranking numbers
     user_settings = get_settings_collection().find_one({"user_id": user_id})
     
@@ -523,4 +547,4 @@ async def rank_and_parse_resumes(
         "candidates": final_results
     }
     
-    return results
+    return resultsx
