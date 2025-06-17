@@ -1,4 +1,4 @@
-# Talynx: AI-Powered HR System Backend
+# Kandidex: AI-Powered HR System Backend
 
 An intelligent HR system backend built with FastAPI that leverages machine learning for resume ranking, candidate evaluation, and HR automation tasks.
 
@@ -29,8 +29,8 @@ The system uses a hybrid approach combining:
 ### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/manogyaguragai/talynx_backend.git
-cd talynx-backend
+git clone https://github.com/manogyaguragai/kandidex_backend.git
+cd kandidex_backend
 ```
 
 ### 2. Create Virtual Environment
@@ -55,7 +55,7 @@ pip install -r requirements.txt
 ## 📦 Project Structure
 
 ```
-talynx-backend/
+kandidex_backend/
 │
 ├── app/
 │   ├── main.py                 # FastAPI application entry point
