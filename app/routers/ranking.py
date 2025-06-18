@@ -152,7 +152,7 @@ async def analyze_one_resume_with_llm(jd_text: str, resume_text: str) -> Dict:
                 {"role": "user", "content": f"Job Description:\n{jd_text}\n\nResume:\n{resume_text}"}
             ],
             response_format={"type": "json_object"},
-            temperature=0.1
+            temperature=0.0
         )
         
         return json.loads(response.choices[0].message.content)
