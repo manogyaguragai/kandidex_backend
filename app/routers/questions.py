@@ -13,10 +13,11 @@ from config import (
 )
 from bson import ObjectId
 from datetime import datetime
+from config import OPENAI_API_KEY
 
 router = APIRouter(prefix="/questions", tags=["generate_questions"])
 
-openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+openai_client = OpenAI(api_key=OPENAI_API_KEY)
 
 class Question(BaseModel):
     question: str

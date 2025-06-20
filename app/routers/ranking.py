@@ -19,14 +19,15 @@ from config import (
     get_batches_collection,
     get_screening_runs_collection,
     get_settings_collection,
-    log_activity
+    log_activity,
+    OPENAI_API_KEY
 )
 from bson import ObjectId
 
 router = APIRouter(prefix="/rank", tags=["ranking"])
 
 # Initialize OpenAI client
-aopenai = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+aopenai = AsyncOpenAI(api_key=OPENAI_API_KEY)
 
 class Candidate(BaseModel):
     id: str

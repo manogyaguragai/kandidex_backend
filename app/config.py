@@ -16,6 +16,7 @@ DB_NAME = config.get("MONGODB_DB_NAME", "KandidexDB")
 JWT_SECRET = config["JWT_SECRET_KEY"]
 JWT_ALGORITHM = config["JWT_ALGORITHM"]
 ACCESS_TOKEN_EXPIRE = int(config.get("JWT_ACCESS_TOKEN_EXPIRE_MINUTES", 30))
+OPENAI_API_KEY = config["OPENAI_API_KEY"]
 
 def get_db():
     client = MongoClient(MONGODB_URL)
